@@ -1,8 +1,11 @@
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { prisma } from "../db/prisma";
 import { env } from "../config/env";
 import type { Role } from "@prisma/client";
+
+const PASSWORD_RESET_EXPIRY_HOURS = 1;
 
 const SALT_ROUNDS = 10;
 
@@ -51,4 +54,35 @@ export async function createRefreshTokenRecord(userId: string, token: string): P
 
 export async function deleteRefreshToken(token: string): Promise<void> {
   await prisma.refreshToken.deleteMany({ where: { token } });
+}
+
+export function createPasswordResetToken(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+export async function savePasswordResetToken(userId: string, token: string): Promise<void> {
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY_HOURS * 60 * 60 * 1000);
+  await prisma.passwordResetToken.create({
+    data: { token, userId, expiresAt },
+  });
+}
+
+export async function findValidPasswordResetToken(token: string): Promise<{ userId: string } | null> {
+  const record = await prisma.passwordResetToken.findUnique({
+    where: { token },
+  });
+  if (!record || record.expiresAt < new Date()) return null;
+  return { userId: record.userId };
+}
+
+export async function deletePasswordResetToken(token: string): Promise<void> {
+  await prisma.passwordResetToken.deleteMany({ where: { token } });
+}
+
+export async function updateUserPassword(userId: string, newPassword: string): Promise<void> {
+  const passwordHash = await hashPassword(newPassword);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash },
+  });
 }

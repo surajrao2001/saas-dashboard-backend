@@ -19,6 +19,15 @@ const refreshSchema = z.object({
   refresh_token: z.string().min(1),
 });
 
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(6),
+});
+
 function toUserResponse(user: { id: string; email: string; name: string | null; role: string }) {
   return { id: user.id, email: user.email, name: user.name, role: user.role };
 }
@@ -86,6 +95,42 @@ export async function refreshToken(req: Request, res: Response, next: NextFuncti
       access_token: accessToken,
       refresh_token: refreshToken,
     });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function forgotPassword(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = forgotPasswordSchema.parse(req.body);
+    const user = await prisma.user.findUnique({ where: { email: body.email } });
+    // Always return success to avoid email enumeration
+    if (!user) {
+      return res.json({ message: "If an account exists with that email, you will receive a password reset link." });
+    }
+    const token = authService.createPasswordResetToken();
+    await authService.savePasswordResetToken(user.id, token);
+    // TODO: Send email with reset link. For now we return the link in dev (optional).
+    const resetLink = `${process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password?token=${token}`;
+    if (process.env.NODE_ENV === "development") {
+      return res.json({ message: "If an account exists with that email, you will receive a password reset link.", resetLink });
+    }
+    res.json({ message: "If an account exists with that email, you will receive a password reset link." });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function resetPassword(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = resetPasswordSchema.parse(req.body);
+    const record = await authService.findValidPasswordResetToken(body.token);
+    if (!record) {
+      return next(new ConflictError("Invalid or expired reset token"));
+    }
+    await authService.updateUserPassword(record.userId, body.password);
+    await authService.deletePasswordResetToken(body.token);
+    res.json({ message: "Password has been reset successfully." });
   } catch (e) {
     next(e);
   }
